@@ -1,0 +1,293 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/TML-4PM/LLM-JSON/contracts/daily_schema.json",
+  "title": "LLM-JSON Daily Feed Schema",
+  "description": "Schema for all files in daily/YYYY-MM-DD/. Every agent and human reads this layer first. Raw corpus is never required to answer daily questions.",
+  "version": "1.0",
+
+  "folder_contract": {
+    "path": "daily/{YYYY-MM-DD}/",
+    "also_written_to": "daily/latest/",
+    "trigger": "On completion of analyse_in_place job for the given date",
+    "written_by": "build_daily_feed Lambda",
+    "consumers": ["all LLMs", "Troy", "t4h.bridge.orchestrator", "Supabase llm_daily_digest"]
+  },
+
+  "files": {
+
+    "_index.json": {
+      "description": "Entry point. Always read this first. Points to all other files in this folder.",
+      "required": true,
+      "schema": {
+        "type": "object",
+        "required": ["date", "run_id", "providers_included", "total_conversations", "total_learnings", "file_manifest", "generated_at"],
+        "properties": {
+          "date": { "type": "string", "format": "date" },
+          "run_id": { "type": "string", "description": "Unique ID for this daily build run" },
+          "providers_included": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["gpt", "claude", "perplexity", "gemini", "grok"] }
+          },
+          "total_conversations": { "type": "integer" },
+          "total_messages": { "type": "integer" },
+          "total_learnings": { "type": "integer" },
+          "corpus_size_bytes": { "type": "integer" },
+          "file_manifest": {
+            "type": "object",
+            "description": "Map of filename → present (bool). Allows consumers to know what's available.",
+            "additionalProperties": { "type": "boolean" }
+          },
+          "generated_at": { "type": "string", "format": "date-time" },
+          "s3_analysis_prefix": { "type": "string", "description": "S3 URI prefix for full analysis outputs" }
+        }
+      }
+    },
+
+    "cross_llm_summary.md": {
+      "description": "Markdown. Human-readable. Answers: what mattered, what changed, what was learned across all providers today.",
+      "required": true,
+      "sections": [
+        "## Summary (3–5 sentences)",
+        "## What changed today",
+        "## Key learnings (top 5)",
+        "## Contradictions detected",
+        "## Provider highlights",
+        "## Recommended next actions"
+      ]
+    },
+
+    "executive_brief.md": {
+      "description": "2-page max. Troy-focused. Decisions, commitments, blockers, money, risk.",
+      "required": true,
+      "sections": [
+        "## Decisions made",
+        "## Commitments outstanding",
+        "## Blockers unresolved",
+        "## Financial signals",
+        "## Risk flags",
+        "## Immediate next actions"
+      ]
+    },
+
+    "reusable_patterns.json": {
+      "description": "Array of high-reusability learnings (reusability=high, type=reusable_pattern or prompt_win)",
+      "required": true,
+      "schema": {
+        "type": "array",
+        "items": { "$ref": "learning_schema.json" }
+      }
+    },
+
+    "prompt_wins.json": {
+      "description": "Prompts or prompt patterns that produced exceptional results today. Feed into prompts/ folder.",
+      "required": true,
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "provider", "prompt_summary", "outcome_summary", "confidence", "verbatim_prompt_excerpt"],
+          "properties": {
+            "id": { "type": "string" },
+            "provider": { "type": "string" },
+            "prompt_summary": { "type": "string" },
+            "outcome_summary": { "type": "string" },
+            "confidence": { "type": "number" },
+            "verbatim_prompt_excerpt": { "type": "string", "maxLength": 500 },
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "should_add_to_prompt_pack": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "failure_patterns.json": {
+      "description": "What failed, why, and what to avoid repeating.",
+      "required": true,
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "provider", "failure_type", "description", "root_cause", "avoid_pattern"],
+          "properties": {
+            "id": { "type": "string" },
+            "provider": { "type": "string" },
+            "failure_type": { "type": "string", "enum": ["prompt_fail", "workflow_fail", "hallucination", "timeout", "refusal", "output_degradation"] },
+            "description": { "type": "string" },
+            "root_cause": { "type": "string" },
+            "avoid_pattern": { "type": "string" },
+            "mitigation": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "contradictions.json": {
+      "description": "Cases where different LLMs gave conflicting answers on the same topic.",
+      "required": true,
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "topic", "providers_compared", "position_a", "position_b", "agreement", "recommended_stance"],
+          "properties": {
+            "id": { "type": "string" },
+            "topic": { "type": "string" },
+            "providers_compared": { "type": "array", "items": { "type": "string" } },
+            "position_a": { "type": "string" },
+            "position_b": { "type": "string" },
+            "agreement": { "type": "string", "enum": ["agree", "partial", "contradict"] },
+            "recommended_stance": { "type": "string" },
+            "needs_human_review": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "tasks_created.json": {
+      "description": "Tasks and action items detected in today's conversations.",
+      "required": true,
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "title", "assignee", "due_date_hint", "source_provider", "confidence"],
+          "properties": {
+            "id": { "type": "string" },
+            "title": { "type": "string" },
+            "description": { "type": "string" },
+            "assignee": { "type": "string", "enum": ["troy", "agent", "unknown"] },
+            "due_date_hint": { "type": ["string", "null"] },
+            "source_provider": { "type": "string" },
+            "source_conversation_id": { "type": ["string", "null"] },
+            "confidence": { "type": "number" },
+            "business_key": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+
+    "decisions_detected.json": {
+      "description": "Decisions and commitments made or referenced in today's conversations.",
+      "required": false,
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "decision", "made_by", "date", "confidence"],
+          "properties": {
+            "id": { "type": "string" },
+            "decision": { "type": "string" },
+            "made_by": { "type": "string" },
+            "date": { "type": ["string", "null"] },
+            "source_provider": { "type": "string" },
+            "confidence": { "type": "number" },
+            "reversible": { "type": "boolean" },
+            "business_key": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+
+    "entities.json": {
+      "description": "Named entities extracted: people, systems, orgs, products, places.",
+      "required": false,
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["entity", "type", "mention_count"],
+          "properties": {
+            "entity": { "type": "string" },
+            "type": { "type": "string", "enum": ["person", "system", "org", "product", "place", "business_key", "domain"] },
+            "mention_count": { "type": "integer" },
+            "first_seen_provider": { "type": "string" },
+            "notable": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "urls_and_assets.json": {
+      "description": "URLs, S3 URIs, GitHub refs, Supabase tables, Lambda ARNs mentioned today.",
+      "required": false,
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["asset_type", "locator", "context"],
+          "properties": {
+            "asset_type": { "type": "string", "enum": ["url", "s3_uri", "github_ref", "supabase_table", "lambda_arn", "domain", "api_endpoint"] },
+            "locator": { "type": "string" },
+            "context": { "type": "string", "maxLength": 200 },
+            "is_canonical": { "type": "boolean" },
+            "provider": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "memory_candidates.json": {
+      "description": "Facts that should be evaluated for promotion to standing memory.",
+      "required": false,
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "statement", "confidence", "category"],
+          "properties": {
+            "id": { "type": "string" },
+            "statement": { "type": "string", "maxLength": 200 },
+            "confidence": { "type": "number" },
+            "category": { "type": "string", "enum": ["instruction", "preference", "fact", "constraint", "identity", "financial", "technical"] },
+            "replaces_existing": { "type": ["string", "null"], "description": "Existing memory statement it would replace, if any" },
+            "needs_human_review": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "next_best_actions.json": {
+      "description": "Top ordered recommendations for what Troy or agents should do next.",
+      "required": true,
+      "schema": {
+        "type": "array",
+        "maxItems": 10,
+        "items": {
+          "type": "object",
+          "required": ["rank", "action", "rationale", "urgency", "assignee"],
+          "properties": {
+            "rank": { "type": "integer", "minimum": 1 },
+            "action": { "type": "string" },
+            "rationale": { "type": "string" },
+            "urgency": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+            "assignee": { "type": "string", "enum": ["troy", "agent", "either"] },
+            "business_key": { "type": ["string", "null"] },
+            "due_hint": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+
+    "provider_deltas/{provider}.json": {
+      "description": "Per-provider delta. What was different, better, or worse about this provider today vs baseline.",
+      "required": false,
+      "schema": {
+        "type": "object",
+        "required": ["provider", "date", "conversation_count", "learning_count", "strengths_today", "weaknesses_today", "best_prompt_type", "recommended_use"],
+        "properties": {
+          "provider": { "type": "string" },
+          "date": { "type": "string", "format": "date" },
+          "conversation_count": { "type": "integer" },
+          "message_count": { "type": "integer" },
+          "learning_count": { "type": "integer" },
+          "strengths_today": { "type": "array", "items": { "type": "string" } },
+          "weaknesses_today": { "type": "array", "items": { "type": "string" } },
+          "best_prompt_type": { "type": "string" },
+          "recommended_use": { "type": "string" },
+          "contradiction_rate": { "type": "number" },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}
