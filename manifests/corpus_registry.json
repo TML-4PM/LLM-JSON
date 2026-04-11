@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "schema_version": "1.0",
+    "description": "Master index of all raw corpus files in S3. Updated on every upload. Mirrors S3 registries/corpus_registry.json.",
+    "last_updated": "2026-04-10T00:00:00Z",
+    "managed_by": "analyse_in_place Lambda",
+    "repo": "TML-4PM/LLM-JSON",
+    "bucket": "t4h-llm-json",
+    "s3_registry_uri": "s3://t4h-llm-json/llm-json/registries/corpus_registry.json"
+  },
+  "summary": {
+    "total_files": 0,
+    "total_size_bytes": 0,
+    "total_conversations": 0,
+    "total_messages": 0,
+    "providers": {
+      "gpt": { "file_count": 0, "size_bytes": 0 },
+      "claude": { "file_count": 0, "size_bytes": 0 },
+      "perplexity": { "file_count": 0, "size_bytes": 0 },
+      "gemini": { "file_count": 0, "size_bytes": 0 },
+      "grok": { "file_count": 0, "size_bytes": 0 }
+    },
+    "date_range": {
+      "earliest": null,
+      "latest": null
+    }
+  },
+  "corpora": [
+    {
+      "_comment": "Example entry — replace with real data on first upload",
+      "corpus_id": "corpus_gpt_20260410_001",
+      "provider": "gpt",
+      "s3_raw_uri": "s3://t4h-llm-json/llm-json/raw/provider=gpt/year=2026/month=04/day=10/conversations.jsonl.gz",
+      "s3_manifest_uri": "s3://t4h-llm-json/llm-json/raw/provider=gpt/year=2026/month=04/day=10/manifest.json",
+      "file_size_bytes": 0,
+      "conversation_count": 0,
+      "message_count": 0,
+      "date_collected": "2026-04-10",
+      "date_processed": null,
+      "processing_status": "pending",
+      "chunk_count": 0,
+      "s3_chunks_prefix": "s3://t4h-llm-json/llm-json/chunks/provider=gpt/year=2026/month=04/day=10/",
+      "s3_analysis_prefix": "s3://t4h-llm-json/llm-json/analysis/provider=gpt/year=2026/month=04/day=10/",
+      "schema_version": "1.0",
+      "notes": "Initial upload"
+    }
+  ]
+}
