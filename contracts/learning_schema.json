@@ -1,0 +1,204 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/TML-4PM/LLM-JSON/contracts/learning_schema.json",
+  "title": "LLM Learning Object",
+  "description": "Canonical schema for a single learning extracted from LLM conversation corpus. Every learning must conform to this schema before insertion into Supabase or the daily feed.",
+  "type": "object",
+  "required": [
+    "learning_id",
+    "date",
+    "source_provider",
+    "source_file",
+    "learning_type",
+    "title",
+    "summary",
+    "evidence",
+    "reusability",
+    "confidence",
+    "feed_forward",
+    "tags",
+    "schema_version"
+  ],
+  "properties": {
+    "learning_id": {
+      "type": "string",
+      "pattern": "^lrn_[0-9]{8}_[0-9]{6}$",
+      "description": "Globally unique learning ID. Format: lrn_YYYYMMDD_NNNNNN",
+      "examples": ["lrn_20260410_000123"]
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version for forward compatibility"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date learning was extracted, ISO 8601"
+    },
+    "source_provider": {
+      "type": "string",
+      "enum": ["gpt", "claude", "perplexity", "gemini", "grok", "unknown"],
+      "description": "LLM provider that produced the conversation"
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Full S3 URI of the raw source file",
+      "examples": ["s3://t4h-llm-json/llm-json/raw/provider=gpt/year=2026/month=04/day=10/export.jsonl.gz"]
+    },
+    "conversation_id": {
+      "type": ["string", "null"],
+      "description": "Provider-native conversation/thread ID if available"
+    },
+    "message_span": {
+      "type": ["array", "null"],
+      "items": { "type": "integer" },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "Inclusive [start, end] message indices within the source conversation"
+    },
+    "chunk_ref": {
+      "type": ["string", "null"],
+      "description": "S3 URI of the chunk file containing this learning's source messages"
+    },
+    "learning_type": {
+      "type": "string",
+      "enum": [
+        "prompt_win",
+        "prompt_fail",
+        "workflow_win",
+        "workflow_fail",
+        "decision",
+        "commitment",
+        "blocker",
+        "contradiction",
+        "reusable_pattern",
+        "entity_reference",
+        "asset_reference",
+        "anti_pattern",
+        "model_strength",
+        "model_weakness",
+        "opportunity",
+        "canon_update_candidate",
+        "code_snippet",
+        "memory_candidate"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Single-line human and machine readable title"
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Plain-text summary. No markdown. Max 3 sentences."
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["type", "locator"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["quote_ref", "message_ref", "chunk_ref", "external_url", "s3_ref"]
+          },
+          "locator": {
+            "type": "string",
+            "description": "message_NNN, chunk URI, URL, or S3 URI"
+          },
+          "excerpt": {
+            "type": ["string", "null"],
+            "maxLength": 300,
+            "description": "Optional short verbatim excerpt from source"
+          }
+        }
+      }
+    },
+    "reusability": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "none"],
+      "description": "How reusable is this learning across future work"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Extraction confidence 0.0–1.0"
+    },
+    "feed_forward": {
+      "type": "object",
+      "required": ["should_update_prompt_pack", "should_update_memory", "should_create_task"],
+      "properties": {
+        "should_update_prompt_pack": {
+          "type": "boolean"
+        },
+        "should_update_memory": {
+          "type": "boolean"
+        },
+        "should_create_task": {
+          "type": "boolean"
+        },
+        "should_update_canon": {
+          "type": "boolean"
+        },
+        "should_flag_contradiction": {
+          "type": "boolean"
+        },
+        "should_archive": {
+          "type": "boolean"
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Free-form lowercase tags for grouping and retrieval"
+    },
+    "provider_comparison": {
+      "type": ["object", "null"],
+      "description": "Only populated for cross-LLM contradiction learnings",
+      "properties": {
+        "providers_compared": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "agreement": {
+          "type": "string",
+          "enum": ["agree", "partial", "contradict"]
+        },
+        "delta_summary": {
+          "type": "string",
+          "maxLength": 300
+        }
+      }
+    },
+    "business_context": {
+      "type": ["object", "null"],
+      "description": "Optional T4H business linkage",
+      "properties": {
+        "business_key": {
+          "type": "string",
+          "description": "T4H canonical business key e.g. CORE_ATLAS"
+        },
+        "project_code": {
+          "type": "string",
+          "description": "RDTI project code if applicable"
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC ISO 8601 timestamp of extraction"
+    },
+    "extracted_by": {
+      "type": "string",
+      "description": "Lambda function name or job ID that produced this learning"
+    }
+  },
+  "additionalProperties": false
+}
