@@ -1,0 +1,11 @@
+{
+  "note": "Populated automatically by llm-json-publish-learnings Lambda.",
+  "providers": {
+    "gpt":        { "corpus_count": 0, "learning_count": 0, "last_processed": null },
+    "claude":     { "corpus_count": 0, "learning_count": 0, "last_processed": null },
+    "perplexity": { "corpus_count": 0, "learning_count": 0, "last_processed": null },
+    "gemini":     { "corpus_count": 0, "learning_count": 0, "last_processed": null },
+    "grok":       { "corpus_count": 0, "learning_count": 0, "last_processed": null }
+  },
+  "updated_at": null
+}
