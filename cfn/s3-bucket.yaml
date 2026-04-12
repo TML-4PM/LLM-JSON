@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  t4h-llm-json S3 bucket — raw corpus, chunks, analysis, daily feeds, registries.
+  LLM-JSON project. RDTI: is_rd=true, project_code=LLM-JSON.
+
+Parameters:
+  BucketName:
+    Type: String
+    Default: t4h-llm-json
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+
+Resources:
+
+  LlmJsonBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: raw-to-glacier
+            Status: Enabled
+            Filter:
+              Prefix: llm-json/raw/
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: GLACIER_IR
+            ExpirationInDays: 730
+          - Id: chunks-to-glacier
+            Status: Enabled
+            Filter:
+              Prefix: llm-json/chunks/
+            Transitions:
+              - TransitionInDays: 180
+                StorageClass: GLACIER_IR
+            ExpirationInDays: 730
+          - Id: analysis-expire
+            Status: Enabled
+            Filter:
+              Prefix: llm-json/analysis/
+            ExpirationInDays: 365
+          - Id: daily-expire
+            Status: Enabled
+            Filter:
+              Prefix: llm-json/daily/
+            ExpirationInDays: 365
+          - Id: abort-incomplete-multipart
+            Status: Enabled
+            Filter:
+              Prefix: ""
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: llm-json/raw/
+                  - Name: suffix
+                    Value: .jsonl.gz
+            Function: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:llm-json-analyse-in-place
+      Tags:
+        - Key: project_code
+          Value: LLM-JSON
+        - Key: is_rd
+          Value: "true"
+        - Key: owner
+          Value: t4h
+        - Key: environment
+          Value: !Ref Environment
+
+  LlmJsonBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LlmJsonBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyNonTLS
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt LlmJsonBucket.Arn
+              - !Sub ${LlmJsonBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: AllowLambdaAnalyse
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:role/llm-json-analyse-in-place-role
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:HeadObject
+              - s3:ListBucket
+            Resource:
+              - !GetAtt LlmJsonBucket.Arn
+              - !Sub ${LlmJsonBucket.Arn}/*
+          - Sid: AllowLambdaDailyFeed
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:role/llm-json-build-daily-feed-role
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:HeadObject
+            Resource:
+              - !Sub ${LlmJsonBucket.Arn}/llm-json/analysis/*
+              - !Sub ${LlmJsonBucket.Arn}/llm-json/daily/*
+              - !Sub ${LlmJsonBucket.Arn}/llm-json/registries/*
+
+Outputs:
+  BucketName:
+    Value: !Ref LlmJsonBucket
+    Export:
+      Name: llm-json-bucket-name
+  BucketArn:
+    Value: !GetAtt LlmJsonBucket.Arn
+    Export:
+      Name: llm-json-bucket-arn
