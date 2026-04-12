@@ -1,0 +1,301 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  LLM-JSON Lambda fleet — analyse-in-place, build-daily-feed, publish-learnings.
+  Region: ap-southeast-2. Account: 140548542136.
+  RDTI: is_rd=true, project_code=LLM-JSON.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+  S3Bucket:
+    Type: String
+    Default: t4h-llm-json
+  SupabaseUrl:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /t4h/supabase/s1/url
+  SupabaseServiceKey:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /t4h/supabase/s1/service_key
+  GithubToken:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /t4h/github/token
+  TelegramBotToken:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /t4h/telegram/bot_token
+  TelegramChatId:
+    Type: String
+    Default: "6972032328"
+  KillSwitchEnabled:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /t4h/llm-json/kill-switch-enabled
+
+Globals:
+  Function:
+    Runtime: python3.12
+    MemorySize: 2048
+    Timeout: 900
+    Architectures: [arm64]
+    Environment:
+      Variables:
+        S3_BUCKET: !Ref S3Bucket
+        S3_PREFIX: llm-json
+        SUPABASE_URL: !Ref SupabaseUrl
+        SUPABASE_SERVICE_KEY: !Ref SupabaseServiceKey
+        GITHUB_TOKEN: !Ref GithubToken
+        GITHUB_REPO: TML-4PM/LLM-JSON
+        TELEGRAM_BOT_TOKEN: !Ref TelegramBotToken
+        TELEGRAM_CHAT_ID: !Ref TelegramChatId
+        KILL_SWITCH_ENABLED: !Ref KillSwitchEnabled
+        IS_RD: "true"
+        PROJECT_CODE: LLM-JSON
+        ENVIRONMENT: !Ref Environment
+    Tags:
+      project_code: LLM-JSON
+      is_rd: "true"
+      owner: t4h
+      environment: !Ref Environment
+
+Resources:
+
+  # ─────────────────────────────────────────────
+  # SHARED IAM ROLE
+  # ─────────────────────────────────────────────
+  LlmJsonLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: llm-json-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: llm-json-s3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:HeadObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${S3Bucket}
+                  - !Sub arn:aws:s3:::${S3Bucket}/*
+        - PolicyName: llm-json-bedrock
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+        - PolicyName: llm-json-ssm
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/t4h/llm-json/*
+        - PolicyName: llm-json-lambda-invoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:llm-json-*
+
+  # ─────────────────────────────────────────────
+  # 1. ANALYSE IN PLACE
+  # Trigger: S3 PutObject on raw/*.jsonl.gz
+  #          + bridge manual invoke
+  # ─────────────────────────────────────────────
+  AnalyseInPlaceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: llm-json-analyse-in-place
+      Description: Stream-read raw corpus from S3, chunk, extract learnings, write daily feed
+      Handler: handler.lambda_handler
+      CodeUri: jobs/analyse_in_place/
+      Role: !GetAtt LlmJsonLambdaRole.Arn
+      ReservedConcurrentExecutions: 3
+      Environment:
+        Variables:
+          CHUNK_SIZE_MESSAGES: "500"
+          EXTRACTION_MODEL: anthropic.claude-haiku-4-5-20251001
+          MAX_LEARNINGS_PER_CONVERSATION: "20"
+      Events:
+        S3RawUpload:
+          Type: S3
+          Properties:
+            Bucket: !Ref LlmJsonBucketRef
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: llm-json/raw/
+                  - Name: suffix
+                    Value: .jsonl.gz
+
+  AnalyseInPlaceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/llm-json-analyse-in-place
+      RetentionInDays: 30
+
+  # ─────────────────────────────────────────────
+  # 2. BUILD DAILY FEED
+  # Trigger: EventBridge daily 02:00 AEST
+  #          + invoke from analyse-in-place on completion
+  # ─────────────────────────────────────────────
+  BuildDailyFeedFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: llm-json-build-daily-feed
+      Description: Aggregate daily learnings, write daily/ folder to GitHub, update indexes
+      Handler: handler.lambda_handler
+      CodeUri: jobs/build_daily_feed/
+      Role: !GetAtt LlmJsonLambdaRole.Arn
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          TOP_N_ACTIONS: "10"
+          MIN_CONFIDENCE_THRESHOLD: "0.70"
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            Name: llm-json-daily-feed-schedule
+            Schedule: cron(0 16 * * ? *)
+            Description: Daily at 02:00 AEST (16:00 UTC)
+            Enabled: true
+
+  BuildDailyFeedLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/llm-json-build-daily-feed
+      RetentionInDays: 30
+
+  # ─────────────────────────────────────────────
+  # 3. PUBLISH LEARNINGS
+  # Trigger: EventBridge weekly Sunday 03:00 AEST
+  #          + manual bridge invoke
+  # Promotes high-confidence learnings to prompt packs,
+  # queues memory candidates for Troy review via Telegram
+  # ─────────────────────────────────────────────
+  PublishLearningsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: llm-json-publish-learnings
+      Description: Promote prompt_wins to prompts/, queue memory candidates, write provider profiles
+      Handler: handler.lambda_handler
+      CodeUri: jobs/publish_learnings/
+      Role: !GetAtt LlmJsonLambdaRole.Arn
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          MEMORY_CANDIDATE_THRESHOLD: "0.85"
+          PROMPT_PACK_THRESHOLD: "0.80"
+          LOOKBACK_DAYS: "7"
+      Events:
+        WeeklySchedule:
+          Type: Schedule
+          Properties:
+            Name: llm-json-publish-learnings-schedule
+            Schedule: cron(0 17 ? * SUN *)
+            Description: Weekly Sunday 03:00 AEST (17:00 UTC Saturday)
+            Enabled: true
+
+  PublishLearningsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/llm-json-publish-learnings
+      RetentionInDays: 30
+
+  # ─────────────────────────────────────────────
+  # S3 BUCKET REF (import from CFN stack)
+  # ─────────────────────────────────────────────
+  LlmJsonBucketRef:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref S3Bucket
+
+  # ─────────────────────────────────────────────
+  # KILL SWITCH SSM PARAMETER
+  # Set to "true" to disable all Lambdas
+  # ─────────────────────────────────────────────
+  KillSwitchParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /t4h/llm-json/kill-switch-enabled
+      Type: String
+      Value: "false"
+      Description: Set true to disable all llm-json Lambda processing
+
+  # ─────────────────────────────────────────────
+  # CLOUDWATCH ALARMS
+  # ─────────────────────────────────────────────
+  AnalyseInPlaceErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: llm-json-analyse-in-place-errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: llm-json-analyse-in-place
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  BuildDailyFeedErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: llm-json-build-daily-feed-errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: llm-json-build-daily-feed
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  AnalyseInPlaceArn:
+    Value: !GetAtt AnalyseInPlaceFunction.Arn
+    Export:
+      Name: llm-json-analyse-in-place-arn
+  BuildDailyFeedArn:
+    Value: !GetAtt BuildDailyFeedFunction.Arn
+    Export:
+      Name: llm-json-build-daily-feed-arn
+  PublishLearningsArn:
+    Value: !GetAtt PublishLearningsFunction.Arn
+    Export:
+      Name: llm-json-publish-learnings-arn
+  LambdaRoleArn:
+    Value: !GetAtt LlmJsonLambdaRole.Arn
+    Export:
+      Name: llm-json-lambda-role-arn
