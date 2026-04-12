@@ -1,0 +1,12 @@
+{
+  "latest_date": null,
+  "latest_run_id": null,
+  "learning_count": 0,
+  "updated_at": null,
+  "note": "Populated automatically by llm-json-build-daily-feed Lambda on first run.",
+  "paths": {
+    "daily_latest": "daily/latest/",
+    "corpus_registry": "manifests/corpus_registry.json",
+    "provider_index": "manifests/provider_index.json"
+  }
+}
