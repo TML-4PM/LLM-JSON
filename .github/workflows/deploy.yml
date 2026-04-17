@@ -1,0 +1,88 @@
+name: Deploy LLM-JSON
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sam/**'
+      - 'jobs/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: llm-json-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-2
+  STACK_NAME: llm-json-prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Security scan
+        run: |
+          set -e
+          if grep -RE "(AKIA[0-9A-Z]{16}|bk_[A-Za-z0-9_-]{40,})" \
+               --exclude-dir=.git --exclude-dir=.github \
+               --exclude-dir=docs --exclude='*.md' . ; then
+            echo "::error::Real secret detected"
+            exit 1
+          fi
+          echo "OK"
+
+      - name: Pre-flight SSM check
+        run: |
+          set -e
+          MISSING=0
+          for P in /t4h/supabase/s1/url /t4h/supabase/s1/service_key /t4h/github/token /t4h/telegram/bot_token /t4h/llm-json/kill-switch-enabled; do
+            aws ssm get-parameter --name "$P" --region $AWS_REGION --with-decryption >/dev/null 2>&1 \
+              && echo "ok  $P" \
+              || { echo "MISSING $P"; MISSING=1; }
+          done
+          [ $MISSING -eq 1 ] && exit 1 || true
+
+      - name: SAM build
+        run: sam build --template sam/template.yaml
+
+      - name: SAM deploy
+        run: |
+          sam deploy \
+            --stack-name $STACK_NAME \
+            --resolve-s3 \
+            --s3-prefix cfn/llm-json \
+            --region $AWS_REGION \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --tags project_code=LLM-JSON is_rd=true owner=t4h environment=prod
+
+      - name: Post-deploy smoke
+        if: success()
+        run: |
+          aws cloudformation describe-stacks --stack-name $STACK_NAME \
+            --region $AWS_REGION --query 'Stacks[0].StackStatus' --output text
+          for FN in llm-json-analyse-in-place llm-json-build-daily-feed llm-json-publish-learnings; do
+            STATE=$(aws lambda get-function --function-name $FN --region $AWS_REGION \
+              --query 'Configuration.State' --output text 2>/dev/null || echo MISSING)
+            echo "$FN: $STATE"
+          done
