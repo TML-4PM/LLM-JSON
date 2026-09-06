@@ -10,7 +10,7 @@
 #   1. Deploy the three llm-json-* Lambdas (deploy.yml exists and is the canonical path — just push a change under sam/** or jobs/** to trigger it, OR workflow_dispatch the Deploy LLM-JSON workflow)
 #   2. Either rotate AWS keys in repo secrets, OR (preferred) migrate to OIDC role-to-assume:
 #        permissions: { id-token: write, contents: write }
-#        - uses: aws-actions/configure-aws-credentials@v6.1.2
+#        - uses: aws-actions/configure-aws-credentials@v6.2.4
 #          with: { role-to-assume: arn:aws:iam::140548542136:role/troy-lambda-deployer-role, aws-region: ap-southeast-2 }
 # To re-enable: remove this header, uncomment the schedule block, fix the above.
 name: Daily LLM Thread Digest
@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - uses: aws-actions/configure-aws-credentials@v6.1.2
+      - uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
